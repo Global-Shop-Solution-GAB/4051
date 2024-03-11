@@ -1,0 +1,204 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.UDT.uBin.Define("Part",String,PART)
+Variable.UDT.uBin.Define("Location",String,LOCATION)
+Variable.UDT.uBin.Define("Lot",String,LOT)
+Variable.UDT.uBin.Define("Heat",String,HEAT)
+Variable.UDT.uBin.Define("Serial",String,SERIAL_NUMBER)
+Variable.UDT.uBin.Define("Qty",String,QUANTITY)
+Variable.UDT.uBin.Define("Cost",String,UNIT_COST)
+Variable.UDT.uBin.Define("Bin",String,BIN)
+Variable.uGlobal.uBin.Declare("uBin")
+Variable.Global.sToBin.Declare(String)
+Variable.Global.sFromLoc.Declare(String)
+Variable.Global.sToLoc.Declare(String)
+Variable.Global.sFromLot.Declare(String)
+Variable.Global.bInventoryAvailable.Declare(Boolean,false)
+Variable.Global.sTXID.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+V.Local.sRet.Declare
+V.Local.sBinErrors.Declare
+V.Local.sSQL.Declare
+V.Local.bValid.Declare(Boolean,True)
+
+'Get TXID
+V.Global.sTXID.Set(V.Passed.DATA-TRANSID)
+'Get Line Info
+F.Global.Mobile.GetCustomLine(v.Global.sTXID,v.Local.sRet)
+'Assign Values to Variables
+F.Intrinsic.String.Split(V.Local.sRet,"*!*",V.Local.sRet)
+V.Global.sFromLot.Set(V.Local.sRet(1).Trim)
+V.Global.sFromLoc.Set("")
+V.Global.sToBin.Set(V.Local.sRet(2).Trim)
+V.Global.sToLoc.Set("")
+
+F.ODBC.Connection!Conx.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+
+V.Local.sBinErrors.Set("<table><tr><td><b>Summary</b></td></tr>")
+
+'Validate To  Bin
+F.Intrinsic.Control.If(V.Global.sToBin.Trim,=,"")
+	V.Local.bValid.Set(False)
+	F.Intrinsic.String.Concat(V.Local.sBinErrors,"<tr><td>To Bin is Empty</td></tr>",V.Local.sBinErrors)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Concat("select Bin from BIN_MASTER where Bin = '",V.Global.sToBin,"' and Location = '",V.Global.sToLoc,"' ",V.Local.sSQL)
+	F.ODBC.Connection!Conx.ExecuteAndReturn(V.Local.sSQL,V.Local.sRet)
+	F.Intrinsic.Control.if(v.Ambient.ExecuteAndReturnEOF,=,true)
+		V.Local.bValid.Set(False)
+		F.Intrinsic.String.Concat(V.Local.sBinErrors,"<tr><td>Invalid 'To' Bin </td></tr>",V.Local.sBinErrors)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+'Populate UDT with available Parts
+F.Intrinsic.String.Concat("Select PART, LOCATION, LOT,BIN, HEAT, SERIAL_NUMBER, QUANTITY, UNIT_COST from V_ITEM_MASTER where Quantity <> 0 and  LOT= '",V.Global.sFromLot,"' and LOCATION='",V.Global.sFromLoc,"'",V.Local.sSql)
+F.ODBC.Connection!Conx.OpenLocalRecordsetRO("rst",V.Local.sSQL)
+		F.Intrinsic.Variable.LoadUDTFromRecordset("Conx","rst","v.uglobal.uBin",False,100000)
+F.ODBC.Conx!rst.Close
+F.Intrinsic.Control.If(V.uGlobal.uBin.UBound,=,-1)
+	V.Local.bValid.Set(False)
+	F.Intrinsic.String.Concat(V.Local.sBinErrors,"<tr><td>No Inventory to Transfer</td></tr>",V.Local.sBinErrors)
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Concat(V.Local.sBinErrors,"<table></br></br>",V.Local.sBinErrors)
+
+'Generate Upload file
+F.Intrinsic.Control.If(V.Local.bValid,=,True)
+	V.Local.sBinErrors.Set("")
+	F.Intrinsic.Control.CallSub(Build_file)
+F.Intrinsic.Control.Endif
+
+'Generate Result
+F.Intrinsic.Control.CallSub(Generate_result,"sBinErrors",V.Local.sBinErrors)
+
+
+Program.Sub.Main.End
+
+Program.Sub.Build_File.Start
+F.Intrinsic.Control.SetErrorHandler("Build_File_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.iCount.Declare(Long)
+V.Local.sFile.Declare(String)
+V.Local.sText.Declare(String)
+V.Local.sFQN.declare(String)
+V.Local.sPart.Declare(String)
+V.Local.sTemp.Declare(String)
+
+F.Intrinsic.Control.For(V.Local.iCount,0,V.uGlobal.uBin.UBound,1)
+	F.Intrinsic.Control.If(V.local.iCount,>,0)
+		F.Intrinsic.String.Concat(V.Local.sText,V.Ambient.NewLine,V.Local.sText)
+	F.Intrinsic.Control.EndIf
+
+	F.Intrinsic.String.GSSPartString(V.uGlobal.uBin(v.Local.iCount)!Part,,V.Local.sPart)
+	
+
+	V.Local.sTemp.Redim(0,18)
+	V.Local.sTemp(0).Set(V.Local.sPart)
+	V.Local.sTemp(1).set(V.Global.sFromLoc)
+	V.Local.sTemp(2).Set(V.uGlobal.uBin(v.Local.iCount)!Qty)
+	V.Local.sTemp(3).Set(V.Local.sText,V.uGlobal.uBin(v.Local.iCount)!Bin)
+	V.Local.sTemp(4).Set(V.Global.sToBin)
+	V.Local.sTemp(5).Set(V.Global.sFromLot)
+	V.Local.sTemp(6).Set(V.uGlobal.uBin(v.Local.iCount)!Heat)
+	V.Local.sTemp(7).Set(V.uGlobal.uBin(v.Local.iCount)!Serial)
+	V.Local.sTemp(8).Set("")
+	V.Local.sTemp(9).Set("")
+	V.Local.sTemp(10).Set(V.Global.sToLoc)
+	V.Local.sTemp(11).Set("")
+	V.Local.sTemp(12).Set("N")
+	V.Local.sTemp(13).Set(V.Global.sTXID)
+	V.Local.sTemp(14).Set("")
+	V.Local.sTemp(15).Set(V.Global.sFromLot)
+	V.Local.sTemp(16).Set(V.Ambient.Date.formatYYYYMMDD)
+	V.Local.sTemp(17).Set(V.uGlobal.uBin(v.Local.iCount)!Heat)
+	V.Local.sTemp(18).Set(V.uGlobal.uBin(v.Local.iCount)!Serial)
+
+	F.Intrinsic.String.JoinCSV(V.Local.sTemp,True,V.Local.sTemp)
+	F.Intrinsic.String.Concat(V.Local.sText,""",V.Local.sTemp,""",V.local.sText)
+
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.Intrinsic.String.Concat("W",V.Caller.CompanyCode,V.Caller.Terminal,"BIN2BINTRNS",V.Local.sFile)
+F.Intrinsic.String.Concat(V.Caller.FilesDir,"\",V.Local.sFile,V.Local.sFQN)
+F.Intrinsic.File.String2File(V.Local.sFQN,V.Local.sText)
+
+'F.Intrinsic.Debug.InvokeDebugger
+F.Intrinsic.Debug.Stop
+'F.Intrinsic.Debug.CallWrapperDebugEnable
+
+F.Intrinsic.Task.LaunchGSSSync("LOT054UP","-c",V.Local.sFile)
+
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Build_File_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_4051_INV_BIN_TRANSFER.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.Debug.SetLA(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Build_File.End
+
+Program.Sub.Generate_Result.Start
+V.Local.sError.Declare(String)
+V.Local.sResult.Declare
+V.Local.sSql.Declare
+V.Local.sTdStyle.Declare
+V.Local.sColor.Declare
+V.Local.sBinErrors.Declare
+
+F.Intrinsic.Control.SetErrorHandler("Generate_Result_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sBinErrors.Set(V.Args.sBinErrors)
+'Set transaction status color
+V.Local.sColor.Set("Green")
+F.Intrinsic.Control.If(V.Local.sBinErrors.Trim,<>,"")
+	V.Local.sColor.Set("Red")
+F.Intrinsic.Control.Endif
+
+'Build Info Table
+F.Intrinsic.String.Concat(" style=",V.Ambient.DblQuote,"border: 1px solid black; padding: 3px; font-family: arial;  ",V.Ambient.DblQuote,V.Local.sTdStyle)
+F.Intrinsic.String.Concat("<table align="center"  style=",V.Ambient.DblQuote,"border: 1px solid black; padding: 1px; ",V.Ambient.DblQuote,">",V.Local.sResult)
+F.Intrinsic.String.Concat(V.Local.sResult,"<tr><td  bgcolor=",V.Local.sColor," colspan=2>&nbsp;</td></tr>",V.Local.sResult)
+F.Intrinsic.String.Concat(V.Local.sResult,"<tr><td ",V.Local.sTdStyle,"><b>From Lot</b></td><td ",V.Local.sTdStyle,">",V.Global.sFromLot,"</td></tr>",V.Local.sResult)
+F.Intrinsic.String.Concat(V.Local.sResult,"<tr><td ",V.Local.sTdStyle,"><b>From Location</b></td><td ",V.Local.sTdStyle,">",V.Global.sFromLoc,"</td></tr>",V.Local.sResult)
+F.Intrinsic.String.Concat(V.Local.sResult,"<tr><td ",V.Local.sTdStyle,"><b>To Bin</b></td><td ",V.Local.sTdStyle,">",V.Global.sToBin,"</td></tr>",V.Local.sResult)
+F.Intrinsic.String.Concat(V.Local.sResult,"<tr><td ",V.Local.sTdStyle,"><b>To Location</b></td><td ",V.Local.sTdStyle,">",V.Global.sToLoc,"</td></tr></table></br></br>",V.Local.sResult)
+'Append Summary Table
+F.Intrinsic.String.Concat(V.Local.sResult,V.Local.sBinErrors,V.Local.sResult)
+
+
+'Open Global Common Connection
+F.ODBC.Connection!ConC.OpenConnection(V.Ambient.Ccon,V.Ambient.Cuser,V.Ambient.Cpass)
+
+'Generate Result string
+F.Intrinsic.String.Concat("SELECT * FROM Mobile_Custom_Result where  CoCode= '",V.Caller.CompanyCode,"' and TXID= ",V.passed.DATA-TRANSID,V.Local.sSql)
+F.ODBC.Connection!ConC.OpenLocalRecordsetRW("rstResult",V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.ConC!rstResult.EOF,=,True)
+		F.ODBC.ConC!rstResult.AddNew
+		F.ODBC.ConC!rstResult.Set!CoCode(V.Caller.CompanyCode)
+		F.ODBC.ConC!rstResult.Set!TXID(V.passed.DATA-TRANSID)
+	F.Intrinsic.Control.EndIf
+	F.ODBC.ConC!rstResult.Set!Results(V.Local.sResult)
+	F.ODBC.ConC!rstResult.Update
+F.ODBC.ConC!rstResult.Close
+
+F.ODBC.Connection!ConC.Close
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Generate_Result_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_4051_INV_BIN_TRANSFER.gas"",V.Ambient.Newline,V.Ambient.Newline,"Subroutine:",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"ErrorOccurred",V.Ambient.ErrorNumber,"withdescription",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.Debug.SetLA(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Generate_Result.End
+
+
